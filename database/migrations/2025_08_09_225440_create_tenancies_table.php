@@ -18,7 +18,7 @@ return new class extends Migration
             $table->decimal('initial_units', 10, 2)->default(0); // meter start for this tenancy
             $table->date('start_date')->nullable();
             $table->date('end_date')->nullable();
-            $table->boolean('status')->default('false');
+            $table->boolean('status')->default('0');
             $table->timestamps();
             $table->softDeletes();
             $table->unique(['property_id','tenant_id']);
