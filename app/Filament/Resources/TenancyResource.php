@@ -46,7 +46,11 @@ class TenancyResource extends Resource
                     ->searchable()
                     ->required(),
                 Forms\Components\Select::make('tenant_id')
-                    ->relationship('tenant', 'name')
+                    ->relationship(
+                        name: 'tenant',
+                            titleAttribute: 'name',
+                            modifyQueryUsing: fn ($query) => $query->role('Tenant', 'web') // Spatie Roles
+                    )
                     ->preload()
                     ->searchable()
                     ->required(),

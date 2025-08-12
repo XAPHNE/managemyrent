@@ -259,7 +259,11 @@ class BillResource extends Resource
 
                 Tables\Filters\SelectFilter::make('tenant')
                     ->label('Tenant')
-                    ->relationship('tenancy.tenant', 'name'),
+                    ->relationship(
+                        name: 'tenancy.tenant',
+                            titleAttribute: 'name',
+                            modifyQueryUsing: fn ($query) => $query->role('Tenant', 'web') // Spatie Roles
+                    ),
             ])
             ->actions([
                 Tables\Actions\Action::make('markPaid')

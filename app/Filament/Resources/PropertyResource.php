@@ -28,10 +28,16 @@ class PropertyResource extends Resource
             ->schema([
                 Forms\Components\Select::make('landlord_id')
                     ->label('Landlord')
-                    ->relationship('landlord', 'name')
+                    ->relationship(
+                        name: 'landlord',
+                        titleAttribute: 'name',
+                        modifyQueryUsing: fn ($query) => $query->role('Landlord', 'web') // Spatie Roles
+                    )
                     ->searchable()
+                    ->preload()
                     ->required(),
                 Forms\Components\TextInput::make('name')
+                        ->label('Property Name')
                     ->required()
                     ->maxLength(255),
                 Forms\Components\Textarea::make('description')
