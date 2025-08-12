@@ -7,8 +7,11 @@ use App\Filament\Resources\BillResource\RelationManagers;
 use App\Filament\Resources\BillResource\RelationManagers\ItemsRelationManager;
 use App\Models\Bill;
 use App\Models\Tenancy;
+use Carbon\Carbon;
 use Filament\Forms;
 use Filament\Forms\Form;
+use Filament\Forms\Get;
+use Filament\Forms\Set;
 use Filament\Resources\Resource;
 use Filament\Tables;
 use Filament\Tables\Table;
@@ -43,33 +46,117 @@ class BillResource extends Resource
     {
         return $form
             ->schema([
+                Forms\Components\Hidden::make('electricity_rate')->dehydrated(false),
                 Forms\Components\Select::make('tenancy_id')
                     ->label('Tenancy')
                     ->relationship('tenancy', 'id')   // must point to a REAL column
+                    ->reactive()
                     ->preload()
                     ->searchable()
                     ->required()
                     ->getOptionLabelFromRecordUsing(fn (Tenancy $t) =>
                         "{$t->tenant->name} ({$t->property->name})"
-                    ),
+                    )
+                    ->afterStateUpdated(function (Set $set, Get $get, ?int $state) {
+                        if (! $state) return;
+
+                        $tenancy = Tenancy::with([
+                            'property',
+                            'bills' => fn ($q) => $q->latest('bill_date'),
+                        ])->find($state);
+                        if (! $tenancy) return;
+
+                        $lastBill   = $tenancy->bills->first();
+                        $previous   = (int) ($lastBill->present_units ?? $tenancy->initial_units);
+
+                        $rate  = (float) ($tenancy->property->electricity_rate ?? 1);
+                        $water = (float) ($tenancy->property->water_charge ?? 0);
+                        $rent  = (float) ($tenancy->property->monthly_rent ?? 0);
+                        $other = (float) ($get('other_amount') ?? 0);
+
+                        $base   = $lastBill?->bill_date
+                            ? Carbon::parse($lastBill->bill_date)->addMonthNoOverflow()
+                            : Carbon::parse($tenancy->start_date ?? now());
+                        $period = $base->isoFormat('MMM YYYY');
+
+                        // stash for calculations (not saved)
+                        $set('electricity_rate', $rate);
+
+                        // prefill bill fields (saved)
+                        $set('period_label', $period);
+                        $set('bill_date', $base->copy()->startOfMonth()->toDateString());
+                        $set('previous_units', $previous);
+                        $set('water_amount', $water);
+                        $set('rent_amount', $rent);
+
+                        // reset computed + total
+                        $set('present_units', null);
+                        $set('units_consumed', 0);
+                        $set('electricity_amount', 0);
+                        $set('total_amount', round($rent + $water + $other, 2));
+                    }),
                 Forms\Components\TextInput::make('period_label')
                     ->required()
-                    ->maxLength(50),
+                    ->maxLength(50)
+                    ->readOnly(),
                 Forms\Components\Grid::make(3)->schema([
-                    Forms\Components\TextInput::make('previous_units')->numeric()->minValue(0)->required(),
-                    Forms\Components\TextInput::make('present_units')->numeric()->minValue(0)->required(),
-                    Forms\Components\TextInput::make('units_consumed')->numeric()->minValue(0)->required(),
+                    Forms\Components\TextInput::make('previous_units')->readOnly(),
+                    Forms\Components\TextInput::make('present_units')
+                        ->numeric()->minValue(0)->required()
+                        ->reactive()
+                        ->afterStateUpdated(function (Set $set, Get $get, $state) {
+                            $present  = (float) $state;
+                            $previous = (float) ($get('previous_units') ?? 0);
+                            $rate     = (float) ($get('electricity_rate') ?? 0);
+                            $water    = (float) ($get('water_amount') ?? 0);
+                            $rent     = (float) ($get('rent_amount') ?? 0);
+                            $other    = (float) ($get('other_amount') ?? 0);
+
+                            $units = max(0, $present - $previous);
+                            $elec  = round($units * $rate, 2);
+                            $total = round($rent + $water + $elec + $other, 2);
+
+                            $set('units_consumed', $units);
+                            $set('electricity_amount', $elec);
+                            $set('total_amount', $total);
+                        }),
+                    Forms\Components\TextInput::make('units_consumed')->readOnly(),
                 ]),
                 Forms\Components\Grid::make(4)->schema([
-                    Forms\Components\TextInput::make('electricity_amount')->numeric()->required()->label('Electricity (₹)'),
-                    Forms\Components\TextInput::make('water_amount')->numeric()->required()->label('Water (₹)'),
-                    Forms\Components\TextInput::make('rent_amount')->numeric()->required()->label('Rent (₹)'),
-                    Forms\Components\TextInput::make('total_amount')->numeric()->required()->label('Total (₹)'),
+                    Forms\Components\TextInput::make('electricity_amount')->readOnly(),
+                    Forms\Components\TextInput::make('water_amount')
+                        ->numeric()->required()->label('Water (₹)')
+                        ->reactive()
+                        ->afterStateUpdated(fn (Set $set, Get $get) =>
+                            $set('total_amount', round(
+                                (float) ($get('rent_amount') ?? 0) +
+                                (float) ($get('water_amount') ?? 0) +
+                                (float) ($get('electricity_amount') ?? 0) +
+                                (float) ($get('other_amount') ?? 0), 2))
+                        ),
+                    Forms\Components\TextInput::make('rent_amount')
+                        ->numeric()->required()->label('Rent (₹)')
+                        ->reactive()
+                        ->afterStateUpdated(fn (Set $set, Get $get) =>
+                            $set('total_amount', round(
+                                (float) ($get('rent_amount') ?? 0) +
+                                (float) ($get('water_amount') ?? 0) +
+                                (float) ($get('electricity_amount') ?? 0) +
+                                (float) ($get('other_amount') ?? 0), 2))
+                        ),
+                    Forms\Components\TextInput::make('total_amount')->readOnly(),
                 ]),
                 Forms\Components\TextInput::make('other_amount')
                     ->label('Other (₹)')
-                    ->numeric()
-                    ->default(0),
+                    ->numeric()->default(0)
+                    ->reactive()
+                    ->afterStateUpdated(fn (Set $set, Get $get) =>
+                        $set('total_amount', round(
+                            (float) ($get('rent_amount') ?? 0) +
+                            (float) ($get('water_amount') ?? 0) +
+                            (float) ($get('electricity_amount') ?? 0) +
+                            (float) ($get('other_amount') ?? 0), 2))
+                    ),
                 Forms\Components\DatePicker::make('bill_date')
                     ->required(),
                 Forms\Components\TextInput::make('payment_ref')->maxLength(100)->label('Payment Ref')->columnSpanFull(),

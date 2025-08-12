@@ -16,7 +16,7 @@ class Property extends Model
         'name',
         'description',
         'water_charge',
-        'electricity_charge',
+        'electricity_rate',
         'monthly_rent',
         'advance_payment',
         'security_deposit',
